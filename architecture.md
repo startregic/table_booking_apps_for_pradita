@@ -6,43 +6,25 @@ Dokumen ini merupakan kelanjutan arsitektur teknis yang berfokus pada integrasi 
 
 Pada fase ini, fokus utama adalah bagaimana aplikasi berkomunikasi dengan database secara real-time tanpa lag, yang menjadi inti dari aplikasi booking meja ini.
 
-1. Skema Database (Entity Relationship)
+### 1. Struktur Folder (Clean Architecture - Simplified)
+Struktur ini disusun agar mudah *di-scale* (dikembangkan) ke depannya:
 
-Jika menggunakan Supabase (PostgreSQL), struktur tabel minimal yang dibutuhkan:
-
-Tabel users (Sistem Auth)
-
-id (UUID, Primary Key)
-
-nim (String, Unique)
-
-name (String)
-
-Tabel tables (Master Data Meja)
-
-id (UUID, Primary Key)
-
-table_number (String) - Contoh: "M-01"
-
-capacity (Int) - Jumlah kursi
-
-status (Enum: AVAILABLE, OCCUPIED, MAINTENANCE)
-
-qr_code_data (String, Unique) - Data unik yang di-generate untuk QR meja
-
-Tabel bookings (Transaksi)
-
-id (UUID, Primary Key)
-
-user_id (UUID, Foreign Key)
-
-table_id (UUID, Foreign Key)
-
-check_in_time (Timestamp)
-
-check_out_time (Timestamp, Nullable)
-
-status (Enum: ACTIVE, COMPLETED, AUTO_CHECKOUT)
+```text
+app/src/main/java/com/pradita/tablebooking/
+├── di/                     # Dependency Injection (Hilt / Koin)
+├── data/
+│   ├── models/             # Data class (Table, User, Booking)
+│   ├── remote/             # Konfigurasi API / Firebase Realtime DB
+│   └── repository/         # Implementasi Repository
+├── ui/
+│   ├── components/         # Reusable Jetpack Compose (Button, Card, dll)
+│   ├── screens/            
+│   │   ├── dashboard/      # UI Dashboard 
+│   │   ├── scan/           # UI QR Scanner
+│   │   └── booking/        # UI Proses Booking
+│   └── viewmodels/         # State Management (ViewModel)
+├── utils/                  # Helper class (Constants, Extensions)
+└── MainActivity.kt         # Entry point aplikasi
 
 2. Alur Data Real-Time (Data Flow)
 
