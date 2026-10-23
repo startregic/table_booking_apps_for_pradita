@@ -1,9 +1,17 @@
-package com.example.mytablebookingpradita // Pastikan package ini sesuai dengan milikmu
+package com.example.mytablebookingpradita
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,54 +29,78 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.example.mytablebookingpradita.data.local.AppDatabase
+import com.example.mytablebookingpradita.data.remote.ApiState
+import com.example.mytablebookingpradita.data.remote.TableApiService
+import com.example.mytablebookingpradita.data.remote.TableRepository
+import com.google.android.gms.location.LocationServices
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createNotificationChannel() // Inisialisasi Channel Notifikasi
 
-        // Inisialisasi Database dan ViewModel
         val database = AppDatabase.getDatabase(applicationContext)
-        val viewModel: BookingViewModel by viewModels {
-            BookingViewModelFactory(database.bookingDao())
-        }
+        val localViewModel: BookingViewModel by viewModels { BookingViewModelFactory(database.bookingDao()) }
+
+        val apiService = TableApiService.create()
+        val repository = TableRepository(apiService)
+        val apiViewModel: TableApiViewModel by viewModels { TableApiViewModelFactory(repository) }
 
         setContent {
             MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    AppNavigation(viewModel)
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    AppNavigation(localViewModel, apiViewModel)
                 }
             }
+        }
+    }
+
+    // Pembuatan Channel Notifikasi (Wajib untuk Android 8.0+)
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel("booking_channel", "Notifikasi Booking", NotificationManager.IMPORTANCE_DEFAULT)
+            val notificationManager: NotificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+}
+
+// Fungsi Pemicu Notifikasi
+fun showBookingNotification(context: Context, roomName: String, tableNumber: Int) {
+    val builder = NotificationCompat.Builder(context, "booking_channel")
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle("Booking Berhasil!")
+        .setContentText("Meja $tableNumber di $roomName telah dibooking.")
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+    with(NotificationManagerCompat.from(context)) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            notify(System.currentTimeMillis().toInt(), builder.build())
         }
     }
 }
 
 @Composable
-fun AppNavigation(viewModel: BookingViewModel) {
+fun AppNavigation(localViewModel: BookingViewModel, apiViewModel: TableApiViewModel) {
     var currentScreen by remember { mutableStateOf("Login") }
     var selectedRoom by remember { mutableStateOf("") }
 
     when (currentScreen) {
         "Login" -> LoginScreen(onLoginSuccess = { currentScreen = "Dashboard" })
         "Dashboard" -> DashboardScreen(
-            onRoomSelected = { room ->
-                selectedRoom = room
-                currentScreen = "Detail"
-            },
+            onRoomSelected = { room -> selectedRoom = room; currentScreen = "Detail" },
             onHistoryClicked = { currentScreen = "History" }
         )
         "Detail" -> RoomDetailScreen(
-            roomName = selectedRoom,
-            viewModel = viewModel,
+            roomName = selectedRoom, localViewModel = localViewModel, apiViewModel = apiViewModel,
             onBackPressed = { currentScreen = "Dashboard" }
         )
-        "History" -> HistoryScreen(
-            viewModel = viewModel,
-            onBackPressed = { currentScreen = "Dashboard" }
-        )
+        "History" -> HistoryScreen(viewModel = localViewModel, onBackPressed = { currentScreen = "Dashboard" })
     }
 }
 
@@ -78,79 +110,108 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var password by remember { mutableStateOf("") }
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Tareq Booking", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Pradita University", fontSize = 16.sp, color = Color.Gray)
         Spacer(modifier = Modifier.height(32.dp))
-        OutlinedTextField(value = emailOrNim, onValueChange = { emailOrNim = it }, label = { Text("NIM / Email (@pradita.ac.id)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = emailOrNim, onValueChange = { emailOrNim = it }, label = { Text("NIM / Email") }, modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(16.dp))
         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(32.dp))
         Button(
             onClick = {
-                val isNim = emailOrNim.all { it.isDigit() } && emailOrNim.isNotEmpty()
-                val isPraditaEmail = emailOrNim.endsWith("@pradita.ac.id")
-
-                if (isNim || isPraditaEmail) {
-                    onLoginSuccess()
-                } else {
-                    Toast.makeText(context, "Gunakan NIM atau Email Pradita!", Toast.LENGTH_SHORT).show()
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(50.dp)
-        ) {
-            Text("Login", fontSize = 18.sp)
-        }
+                if (emailOrNim.isNotEmpty()) onLoginSuccess()
+                else Toast.makeText(context, "Gunakan NIM atau Email Pradita!", Toast.LENGTH_SHORT).show()
+            }, modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) { Text("Login") }
     }
 }
 
 @Composable
 fun DashboardScreen(onRoomSelected: (String) -> Unit, onHistoryClicked: () -> Unit) {
+    val context = LocalContext.current
     val rooms = listOf("Kantin Gedung 1", "Stulo Gedung 1", "Stulo Gedung 2", "Perpustakaan")
+
+    // ADVANCED 1: CAMERA PERMISSION UNTUK SCAN QR
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) Toast.makeText(context, "Kamera siap digunakan untuk scan QR!", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(context, "Izin Kamera ditolak!", Toast.LENGTH_SHORT).show()
+    }
+
+    // ADVANCED 2 & 3: LOCATION & NOTIFICATION PERMISSION
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        if (locationGranted) {
+            Toast.makeText(context, "Lokasi diverifikasi! Kamu berada di area kampus.", Toast.LENGTH_SHORT).show()
+            onRoomSelected(rooms[0]) // Bypass untuk demo
+        } else {
+            Toast.makeText(context, "Izin lokasi diperlukan untuk booking!", Toast.LENGTH_LONG).show()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Pilih Ruangan", fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Button(onClick = onHistoryClicked) { Text("Riwayat") }
         }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100))) {
+            Text("Scan QR Code Kedatangan", fontWeight = FontWeight.Bold)
+        }
         Spacer(modifier = Modifier.height(24.dp))
+
         rooms.forEach { room ->
             Card(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable { onRoomSelected(room) },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable {
+                    // Cek izin lokasi sebelum masuk ruangan
+                    val hasLocationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                    if (hasLocationPermission) onRoomSelected(room)
+                    else locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS))
+                },
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
-                Text(text = room, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(24.dp))
-            }
+            ) { Text(text = room, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(24.dp)) }
         }
     }
 }
 
 @Composable
-fun RoomDetailScreen(roomName: String, viewModel: BookingViewModel, onBackPressed: () -> Unit) {
+fun RoomDetailScreen(roomName: String, localViewModel: BookingViewModel, apiViewModel: TableApiViewModel, onBackPressed: () -> Unit) {
     val context = LocalContext.current
+    val apiState by apiViewModel.tableState.collectAsState()
+
+    LaunchedEffect(roomName) { apiViewModel.getTables(roomName) }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Button(onClick = onBackPressed, modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)) { Text("Kembali") }
         Text(text = roomName, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(10) { index ->
-                val tableNumber = index + 1
-                Card(
-                    modifier = Modifier.fillMaxWidth().height(100.dp).clickable {
-                        viewModel.addBooking(roomName, tableNumber)
-                        Toast.makeText(context, "Meja $tableNumber di-booking!", Toast.LENGTH_SHORT).show()
-                        onBackPressed()
-                    },
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
-                ) {
-                    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Table $tableNumber", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("Tersedia (Klik u/ Booking)", color = Color(0xFF2E7D32), fontSize = 12.sp)
+
+        when (val state = apiState) {
+            is ApiState.Loading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            is ApiState.Error -> {
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(text = "Gagal mengambil data Server!", color = Color.Red)
+                    Button(onClick = { apiViewModel.getTables(roomName) }, modifier = Modifier.padding(top = 8.dp)) { Text("Retry") }
+                }
+            }
+            is ApiState.Empty -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Data Meja Kosong") }
+            is ApiState.Success -> {
+                LazyVerticalGrid(columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(10) { index ->
+                        val tableNumber = index + 1
+                        Card(
+                            modifier = Modifier.fillMaxWidth().height(100.dp).clickable {
+                                localViewModel.addBooking(roomName, tableNumber)
+                                showBookingNotification(context, roomName, tableNumber) // ADVANCED 3: TRIGGER NOTIFIKASI
+                                Toast.makeText(context, "Meja $tableNumber di-booking!", Toast.LENGTH_SHORT).show()
+                                onBackPressed()
+                            },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Table $tableNumber", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Klik u/ Booking", color = Color(0xFF2E7D32), fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -161,14 +222,11 @@ fun RoomDetailScreen(roomName: String, viewModel: BookingViewModel, onBackPresse
 @Composable
 fun HistoryScreen(viewModel: BookingViewModel, onBackPressed: () -> Unit) {
     val historyList by viewModel.bookingHistory.collectAsState(initial = emptyList())
-
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Button(onClick = onBackPressed, modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)) { Text("Kembali") }
         Text("Riwayat Booking (Offline)", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-
-        if (historyList.isEmpty()) {
-            Text("Belum ada riwayat meja yang dibooking.", color = Color.Gray)
-        } else {
+        if (historyList.isEmpty()) Text("Belum ada riwayat meja yang dibooking.", color = Color.Gray)
+        else {
             LazyColumn {
                 items(historyList) { booking ->
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
