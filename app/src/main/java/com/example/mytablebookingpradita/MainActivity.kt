@@ -19,12 +19,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -37,12 +41,11 @@ import com.example.mytablebookingpradita.data.local.AppDatabase
 import com.example.mytablebookingpradita.data.remote.ApiState
 import com.example.mytablebookingpradita.data.remote.TableApiService
 import com.example.mytablebookingpradita.data.remote.TableRepository
-import com.google.android.gms.location.LocationServices
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        createNotificationChannel() // Inisialisasi Channel Notifikasi
+        createNotificationChannel()
 
         val database = AppDatabase.getDatabase(applicationContext)
         val localViewModel: BookingViewModel by viewModels { BookingViewModelFactory(database.bookingDao()) }
@@ -60,7 +63,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Pembuatan Channel Notifikasi (Wajib untuk Android 8.0+)
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel("booking_channel", "Notifikasi Booking", NotificationManager.IMPORTANCE_DEFAULT)
@@ -70,7 +72,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Fungsi Pemicu Notifikasi
 fun showBookingNotification(context: Context, roomName: String, tableNumber: Int) {
     val builder = NotificationCompat.Builder(context, "booking_channel")
         .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -109,20 +110,55 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var emailOrNim by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val context = LocalContext.current
+    val scrollState = rememberScrollState()
 
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .verticalScroll(scrollState) // 02 KEYBOARD-SAFE: Bisa discroll jika tertutup keyboard
+            .imePadding(), // 02 KEYBOARD-SAFE: Menambahkan padding otomatis saat keyboard muncul
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
         Text("Tareq Booking", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(32.dp))
-        OutlinedTextField(value = emailOrNim, onValueChange = { emailOrNim = it }, label = { Text("NIM / Email") }, modifier = Modifier.fillMaxWidth())
+
+        OutlinedTextField(
+            value = emailOrNim,
+            onValueChange = { emailOrNim = it },
+            label = { Text("NIM / Email") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Input untuk NIM atau Email kampus" } // 03 ACCESSIBILITY
+        )
         Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Input untuk Password" } // 03 ACCESSIBILITY
+        )
         Spacer(modifier = Modifier.height(32.dp))
+
         Button(
             onClick = {
-                if (emailOrNim.isNotEmpty()) onLoginSuccess()
-                else Toast.makeText(context, "Gunakan NIM atau Email Pradita!", Toast.LENGTH_SHORT).show()
-            }, modifier = Modifier.fillMaxWidth().height(50.dp)
-        ) { Text("Login") }
+                // MENGGUNAKAN VALIDATOR (Pemisahan Tanggung Jawab)
+                val (isValid, message) = AuthValidator.validateLogin(emailOrNim, password)
+
+                // 04 FEEDBACK AKSI: Memberi Toast respons dari Validator
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+
+                if (isValid) onLoginSuccess()
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) {
+            Text("Login")
+        }
     }
 }
 
@@ -131,20 +167,18 @@ fun DashboardScreen(onRoomSelected: (String) -> Unit, onHistoryClicked: () -> Un
     val context = LocalContext.current
     val rooms = listOf("Kantin Gedung 1", "Stulo Gedung 1", "Stulo Gedung 2", "Perpustakaan")
 
-    // ADVANCED 1: CAMERA PERMISSION UNTUK SCAN QR
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) Toast.makeText(context, "Kamera siap digunakan untuk scan QR!", Toast.LENGTH_SHORT).show()
-        else Toast.makeText(context, "Izin Kamera ditolak!", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(context, "Izin Kamera ditolak!", Toast.LENGTH_SHORT).show() // 04 FEEDBACK AKSI
     }
 
-    // ADVANCED 2 & 3: LOCATION & NOTIFICATION PERMISSION
     val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
         val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
         if (locationGranted) {
             Toast.makeText(context, "Lokasi diverifikasi! Kamu berada di area kampus.", Toast.LENGTH_SHORT).show()
-            onRoomSelected(rooms[0]) // Bypass untuk demo
+            onRoomSelected(rooms[0])
         } else {
-            Toast.makeText(context, "Izin lokasi diperlukan untuk booking!", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Izin lokasi diperlukan untuk booking!", Toast.LENGTH_LONG).show() // 04 FEEDBACK AKSI
         }
     }
 
@@ -163,7 +197,6 @@ fun DashboardScreen(onRoomSelected: (String) -> Unit, onHistoryClicked: () -> Un
         rooms.forEach { room ->
             Card(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable {
-                    // Cek izin lokasi sebelum masuk ruangan
                     val hasLocationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                     if (hasLocationPermission) onRoomSelected(room)
                     else locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS))
@@ -190,19 +223,20 @@ fun RoomDetailScreen(roomName: String, localViewModel: BookingViewModel, apiView
             is ApiState.Error -> {
                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(text = "Gagal mengambil data Server!", color = Color.Red)
-                    Button(onClick = { apiViewModel.getTables(roomName) }, modifier = Modifier.padding(top = 8.dp)) { Text("Retry") }
+                    Button(onClick = { apiViewModel.getTables(roomName) }, modifier = Modifier.padding(top = 8.dp)) { Text("Retry") } // 04 FEEDBACK AKSI
                 }
             }
             is ApiState.Empty -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Data Meja Kosong") }
             is ApiState.Success -> {
-                LazyVerticalGrid(columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 01 LAYOUT ADAPTIF: Mengubah Fixed(2) menjadi Adaptive(120.dp) agar grid dinamis menyesuaikan lebar layar
+                LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 120.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(10) { index ->
                         val tableNumber = index + 1
                         Card(
                             modifier = Modifier.fillMaxWidth().height(100.dp).clickable {
                                 localViewModel.addBooking(roomName, tableNumber)
-                                showBookingNotification(context, roomName, tableNumber) // ADVANCED 3: TRIGGER NOTIFIKASI
-                                Toast.makeText(context, "Meja $tableNumber di-booking!", Toast.LENGTH_SHORT).show()
+                                showBookingNotification(context, roomName, tableNumber)
+                                Toast.makeText(context, "Meja $tableNumber di-booking!", Toast.LENGTH_SHORT).show() // 04 FEEDBACK AKSI
                                 onBackPressed()
                             },
                             colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
@@ -225,14 +259,17 @@ fun HistoryScreen(viewModel: BookingViewModel, onBackPressed: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Button(onClick = onBackPressed, modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)) { Text("Kembali") }
         Text("Riwayat Booking (Offline)", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-        if (historyList.isEmpty()) Text("Belum ada riwayat meja yang dibooking.", color = Color.Gray)
-        else {
+
+        if (historyList.isEmpty()) {
+            Text("Belum ada riwayat meja yang dibooking.", color = Color.Gray)
+        } else {
             LazyColumn {
                 items(historyList) { booking ->
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("${booking.roomName} - Meja ${booking.tableNumber}", fontWeight = FontWeight.Bold)
-                            Text("Status: ${booking.status}", color = Color.Gray, fontSize = 14.sp)
+                            // ERROR DIPERBAIKI DI BARIS BAWAH INI:
+                            Text(text = "${booking.roomName} - Meja ${booking.tableNumber}", fontWeight = FontWeight.Bold)
+                            Text(text = "Status: ${booking.status}", color = Color.Gray, fontSize = 14.sp)
                         }
                     }
                 }
